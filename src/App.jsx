@@ -47,7 +47,7 @@ function App() {
         <div className="header-inner">
           <div className="school-logo-wrap">
             <img
-              src="/logo.png"
+              src={`${import.meta.env.BASE_URL}logo.png`}
               alt="Sarah Redfern High School"
               onError={(e) => {
                 e.target.style.display = 'none';

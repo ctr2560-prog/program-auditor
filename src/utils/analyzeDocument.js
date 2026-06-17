@@ -54,21 +54,32 @@ function findUnitDurationMatch(text) {
 }
 
 /**
- * Returns true if a plausible duration value appears within 250 chars
- * AFTER a "Duration" label — i.e. the field is actually filled in.
+ * Returns true if ANY plausible duration value can be found — used when
+ * a Duration label is already confirmed (so no strict threshold needed).
+ * Covers: "10 weeks", "20 lessons", "Term 3", "Semester 1", "1 term"
+ */
+function anyDurationValue(text) {
+  return (
+    /\d+\.?\d*\s*(weeks?|hours?|lessons?|sessions?|periods?|terms?|semesters?)/i.test(text) ||
+    /\b(term|semester)\s*[1-4]\b/i.test(text)
+  );
+}
+
+/**
+ * Returns true if the Duration label appears to have a value filled in.
+ * Checks 500 chars after each label occurrence, then falls back to first
+ * half of the document (handles wide-table mammoth extraction).
  */
 function durationLabelHasValue(text) {
-  let idx = text.search(/\bduration\b/i);
-  while (idx !== -1) {
-    const window = text.slice(idx, idx + 250);
-    if (/(\d+\.?\d*)\s*(weeks?|hours?|lessons?|sessions?|periods?)/i.test(window)) return true;
-    idx = text.indexOf(text.slice(idx, idx + 8), idx + 1); // search for next occurrence
-    idx = text.search(new RegExp('\\bduration\\b', 'i'), idx + 8);
+  const re = /\bduration\b/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const window = text.slice(m.index, m.index + 500);
+    if (anyDurationValue(window)) return true;
   }
-  // For table-based DOCX where mammoth extracts columns separately,
-  // also accept a unit-level number anywhere in the first 40 % of the doc.
-  const earlyText = text.slice(0, Math.floor(text.length * 0.4));
-  return findUnitDurationMatch(earlyText) !== null;
+  // Fallback: value anywhere in first half of doc (label and value may be in
+  // separate table columns rendered far apart by mammoth).
+  return anyDurationValue(text.slice(0, Math.floor(text.length * 0.5)));
 }
 
 function hasBlankPlaceholders(text) {
@@ -234,42 +245,27 @@ export const CRITERIA_META = [
       const hasDurationLabel =
         /\bduration\b/i.test(text) || /length of (unit|program)/i.test(text);
       const unitDuration = findUnitDurationMatch(text);
-      const labelHasValue = hasDurationLabel && durationLabelHasValue(text);
 
-      if (labelHasValue) {
-        // Label present AND a plausible duration value is nearby or in header area
-        const match = unitDuration;
-        const valueStr = match ? `${match[1]} ${match[2].toLowerCase()}` : 'a duration value';
-        return {
-          tier: 'strong',
-          feedback: `Duration is clearly stated (${valueStr}) — this makes scope and sequence verification straightforward.`,
-        };
-      }
-
-      if (hasDurationLabel && !unitDuration) {
-        // "Duration" heading exists but the field appears to be empty
+      if (hasDurationLabel) {
+        if (durationLabelHasValue(text)) {
+          const valueStr = unitDuration
+            ? `${unitDuration[1]} ${unitDuration[2].toLowerCase()}`
+            : 'a duration value';
+          return {
+            tier: 'strong',
+            feedback: `Duration is clearly stated (${valueStr}) — this makes scope and sequence verification straightforward.`,
+          };
+        }
         return {
           tier: 'missing',
           feedback: 'A "Duration" field is present but no timeframe value could be found — the field appears to be blank. An empty duration label is not compliant. Fill in the number of weeks, hours or lessons for this unit.',
         };
       }
 
-      if (unitDuration && !hasDurationLabel) {
-        // A plausible duration value exists somewhere but there's no explicit label
-        const n = unitDuration[1];
-        const u = unitDuration[2].toLowerCase();
+      if (unitDuration) {
         return {
           tier: 'partial',
-          feedback: `A timeframe of ${n} ${u} is mentioned but there is no explicit "Duration" field or label. Adding a clearly labelled duration in the unit header ensures it\'s immediately identifiable during an audit.`,
-        };
-      }
-
-      // hasDurationLabel && unitDuration but value not confirmed near label
-      // (table-extraction edge case — give benefit of the doubt)
-      if (hasDurationLabel && unitDuration) {
-        return {
-          tier: 'strong',
-          feedback: `Duration is present (${unitDuration[1]} ${unitDuration[2].toLowerCase()}) — scope and sequence can be verified.`,
+          feedback: `A timeframe of ${unitDuration[1]} ${unitDuration[2].toLowerCase()} is mentioned but there is no explicit "Duration" field or label. Adding a clearly labelled duration in the unit header ensures it\'s immediately identifiable during an audit.`,
         };
       }
 
